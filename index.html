@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FACT Ride</title>
+<meta name="theme-color" content="#1f3a5f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FACT Ride">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root { --bg:#f3f5f8; --card:#fff; --text:#1a1f29; --sub:#5b6575; --main:#1f3a5f; --accent:#fc5200; --line:#dde3ea; --ok:#1e8449; --ng:#c0392b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f141b; --card:#18202b; --text:#eef2f7; --sub:#9aa6b5; --main:#5b8fd6; --line:#2a3442; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body { font-family: -apple-system, "Hiragino Sans", "Yu Gothic UI", Meiryo, sans-serif; background: var(--bg); color: var(--text);
+         padding: env(safe-area-inset-top) 0 calc(64px + env(safe-area-inset-bottom)); }
+  header { padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; }
+  header h1 { margin: 0; font-size: 18px; }
+  header h1 span { color: var(--accent); }
+  #gpsState { font-size: 12px; color: var(--sub); }
+  main { padding: 0 16px 16px; max-width: 640px; margin: 0 auto; }
+  section { display: none; } section.on { display: block; }
+  .card { background: var(--card); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  .map { height: 220px; border-radius: 12px; overflow: hidden; margin-bottom: 12px; background: var(--line); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .stat { background: var(--card); border-radius: 12px; padding: 10px 12px; }
+  .stat .k { font-size: 12px; color: var(--sub); }
+  .stat .v { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .stat .v small { font-size: 14px; font-weight: 400; color: var(--sub); margin-left: 2px; }
+  .stat.big { grid-column: span 2; }
+  .stat.big .v { font-size: 52px; }
+  .btns { display: flex; gap: 10px; margin-top: 14px; }
+  button { font: inherit; border: 0; border-radius: 12px; padding: 16px; font-size: 18px; font-weight: 700; cursor: pointer; flex: 1; }
+  .b-start { background: var(--accent); color: #fff; }
+  .b-pause { background: var(--main); color: #fff; }
+  .b-stop { background: var(--ng); color: #fff; }
+  .b-sub { background: var(--line); color: var(--text); font-size: 15px; font-weight: 400; padding: 12px; }
+  .note { font-size: 13px; color: var(--sub); line-height: 1.6; }
+  .ride { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .ride:last-child { border-bottom: 0; }
+  .ride .t { font-weight: 700; }
+  .ride .d { font-size: 13px; color: var(--sub); }
+  .ride .km { font-size: 20px; font-weight: 700; white-space: nowrap; }
+  .bar { height: 12px; background: var(--line); border-radius: 6px; overflow: hidden; margin: 8px 0 4px; }
+  .bar i { display: block; height: 100%; background: var(--accent); }
+  h2 { font-size: 16px; margin: 4px 0 10px; }
+  label { display: block; font-size: 14px; margin: 10px 0 4px; }
+  input[type=number], input[type=text] { width: 100%; padding: 10px; font-size: 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  nav { position: fixed; left: 0; right: 0; bottom: 0; display: flex; background: var(--card); border-top: 1px solid var(--line);
+        padding-bottom: env(safe-area-inset-bottom); z-index: 1000; }
+  nav button { background: none; color: var(--sub); font-size: 13px; font-weight: 400; padding: 10px 0 12px; border-radius: 0; }
+  nav button.on { color: var(--accent); font-weight: 700; }
+  nav button b { display: block; font-size: 20px; }
+  #toast { position: fixed; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: #222; color: #fff;
+           padding: 10px 16px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 2000; }
+  #toast.on { opacity: .92; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>FACT <span>Ride</span></h1>
+  <div id="gpsState">GPS:待機中</div>
+</header>
+
+<main>
+  <!-- 走る -->
+  <section id="s-ride" class="on">
+    <div id="liveMap" class="map"></div>
+    <div class="grid">
+      <div class="stat big"><div class="k">距離</div><div class="v" id="vDist">0.00<small>km</small></div></div>
+      <div class="stat"><div class="k">走行時間</div><div class="v" id="vTime">0:00:00</div></div>
+      <div class="stat"><div class="k">現在の速度</div><div class="v" id="vSpeed">0.0<small>km/h</small></div></div>
+      <div class="stat"><div class="k">平均速度</div><div class="v" id="vAvg">0.0<small>km/h</small></div></div>
+      <div class="stat"><div class="k">最高速度</div><div class="v" id="vMax">0.0<small>km/h</small></div></div>
+      <div class="stat"><div class="k">獲得標高</div><div class="v" id="vElev">0<small>m</small></div></div>
+      <div class="stat"><div class="k">経過時間</div><div class="v" id="vElapsed">0:00:00</div></div>
+    </div>
+    <div class="btns" id="btnIdle"><button class="b-start" id="bStart">スタート</button></div>
+    <div class="btns hidden" id="btnRun"><button class="b-pause" id="bPause">一時停止</button></div>
+    <div class="btns hidden" id="btnPaused">
+      <button class="b-start" id="bResume">再開</button>
+      <button class="b-stop" id="bFinish">終了して保存</button>
+    </div>
+    <div class="card note" style="margin-top:14px">
+      走行中は画面をつけたままにしてください。iPhoneは画面が消えると記録が止まることがあります。<br>
+      <button class="b-sub" id="bDemo" style="margin-top:8px;width:100%">デモ走行を試す(GPSなしで動作確認)</button>
+    </div>
+  </section>
+
+  <!-- 記録 -->
+  <section id="s-log">
+    <div class="card">
+      <h2 id="yearTitle">今年の走行距離</h2>
+      <div style="font-size:28px;font-weight:700" id="yearKm">0 km</div>
+      <div class="bar"><i id="yearBar" style="width:0"></i></div>
+      <div class="note" id="yearNote"></div>
+    </div>
+    <div class="card">
+      <h2>月ごとの距離</h2>
+      <div id="monthList" class="note"></div>
+    </div>
+    <div class="card">
+      <h2>走行記録</h2>
+      <div id="rideList"></div>
+    </div>
+  </section>
+
+  <!-- 記録の詳細 -->
+  <section id="s-detail">
+    <button class="b-sub" id="bBack" style="width:100%;margin-bottom:12px">← 記録一覧に戻る</button>
+    <div class="card">
+      <label for="dName" style="margin-top:0">タイトル</label>
+      <input type="text" id="dName">
+      <div class="note" id="dDate" style="margin-top:6px"></div>
+    </div>
+    <div id="detailMap" class="map"></div>
+    <div class="grid" id="dStats"></div>
+    <div class="btns">
+      <button class="b-sub" id="bGpx">GPXで保存</button>
+      <button class="b-sub" id="bDel" style="color:var(--ng)">削除</button>
+    </div>
+  </section>
+
+  <!-- 設定 -->
+  <section id="s-set">
+    <div class="card">
+      <h2>目標</h2>
+      <label for="goal">年間の目標距離(km)</label>
+      <input type="number" id="goal" min="1" step="1">
+    </div>
+    <div class="card">
+      <h2>データの保存・復元</h2>
+      <p class="note">記録はこのiPhoneのブラウザの中だけに保存されています。ブラウザのデータを消すと記録も消えるので、ときどきバックアップしてください。</p>
+      <div class="btns" style="margin-top:0">
+        <button class="b-sub" id="bBackup">バックアップを保存</button>
+        <button class="b-sub" id="bRestoreBtn">バックアップから復元</button>
+      </div>
+      <input type="file" id="restoreFile" accept=".json,application/json" class="hidden">
+    </div>
+    <div class="card note">
+      FACT Ride ver 0.1(FACT.LABO)<br>
+      地図:© OpenStreetMap contributors
+    </div>
+  </section>
+</main>
+
+<nav>
+  <button data-s="s-ride" class="on"><b>🚴</b>走る</button>
+  <button data-s="s-log"><b>📊</b>記録</button>
+  <button data-s="s-set"><b>⚙️</b>設定</button>
+</nav>
+<div id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+// ===== 設定値 =====
+const MAX_ACCURACY = 30;     // これより精度が悪い(m)位置は使わない
+const MIN_STEP = 5;          // これ未満の移動(m)は記録しない(GPSのぶれ対策)
+const MOVING_SPEED = 1.0;    // これ以上の速度(m/s)のときだけ走行時間に数える(約3.6km/h)
+const MAX_SPEED = 25;        // これを超える速度(m/s、90km/h)は異常値として捨てる
+const ELEV_STEP = 3;         // 標高の上りは、これ(m)以上の変化でまとめて数える
+
+// ===== 小道具 =====
+const $ = id => document.getElementById(id);
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 2000); }
+function fmtTime(sec) { sec = Math.floor(sec); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60; return h + ":" + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0"); }
+function kmh(ms) { return (ms * 3.6).toFixed(1); }
+function km(m) { return (m / 1000).toFixed(2); }
+function dist(a, b) { // 2点間の距離(m)
+  const R = 6371000, r = Math.PI / 180;
+  const dLat = (b[0] - a[0]) * r, dLon = (b[1] - a[1]) * r;
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+function dateLabel(ms) { const d = new Date(ms); return d.getFullYear() + "/" + (d.getMonth() + 1) + "/" + d.getDate() + " " + d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0"); }
+
+// ===== 保存(IndexedDB) =====
+const DB = {
+  db: null,
+  open() {
+    return new Promise((ok, ng) => {
+      const req = indexedDB.open("factRide", 1);
+      req.onupgradeneeded = () => { const d = req.result; d.createObjectStore("rides", { keyPath: "id" }); d.createObjectStore("kv"); };
+      req.onsuccess = () => { this.db = req.result; ok(); };
+      req.onerror = () => ng(req.error);
+    });
+  },
+  tx(store, mode, fn) {
+    return new Promise((ok, ng) => {
+      const t = this.db.transaction(store, mode); const s = t.objectStore(store);
+      const r = fn(s); t.oncomplete = () => ok(r && r.result); t.onerror = () => ng(t.error);
+    });
+  },
+  allRides() { return this.tx("rides", "readonly", s => s.getAll()); },
+  putRide(r) { return this.tx("rides", "readwrite", s => s.put(r)); },
+  delRide(id) { return this.tx("rides", "readwrite", s => s.delete(id)); },
+  get(k) { return this.tx("kv", "readonly", s => s.get(k)); },
+  set(k, v) { return this.tx("kv", "readwrite", s => s.put(v, k)); },
+  del(k) { return this.tx("kv", "readwrite", s => s.delete(k)); }
+};
+
+// ===== 地図 =====
+const hasMap = typeof L !== "undefined";
+function makeMap(id) {
+  if (!hasMap) { $(id).innerHTML = '<div class="note" style="padding:16px">地図を読み込めませんでした(電波を確認してください)。記録は続けられます。</div>'; return null; }
+  const m = L.map(id, { zoomControl: false, attributionControl: true }).setView([37.9162, 139.0364], 13);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(m);
+  return m;
+}
+const live = { map: null, line: null, dot: null };
+function liveMapInit() {
+  if (live.map || !hasMap) return;
+  live.map = makeMap("liveMap");
+  live.line = L.polyline([], { color: "#fc5200", weight: 5 }).addTo(live.map);
+  live.dot = L.circleMarker([0, 0], { radius: 7, color: "#fff", weight: 2, fillColor: "#1f3a5f", fillOpacity: 1 });
+}
+
+// ===== 走行の記録 =====
+let ride = null;       // 記録中の走行
+let state = "idle";    // idle / run / paused
+let watchId = null, tick = null, wakeLock = null, demoTimer = null;
+let lastFix = null;    // 直前の位置(走行時間・速度の計算用)
+
+function newRide(demo) {
+  return { id: String(Date.now()), name: "", demo: !!demo, start: Date.now(), end: null, points: [],
+           distance: 0, moving: 0, elapsedBefore: 0, runSince: Date.now(), maxSpeed: 0, elevGain: 0, elevBase: null };
+}
+function elapsed() { return ride ? ride.elapsedBefore + (state === "run" ? (Date.now() - ride.runSince) / 1000 : 0) : 0; }
+
+function onFix(lat, lon, alt, acc, spd, t) {
+  if (state !== "run" || !ride) return;
+  $("gpsState").textContent = "GPS:精度 " + Math.round(acc) + "m";
+  if (acc > MAX_ACCURACY) return;
+  const p = [lat, lon];
+  if (lastFix) {
+    const dt = (t - lastFix.t) / 1000, d = dist(lastFix.p, p);
+    if (dt > 0) {
+      let v = (spd != null && spd >= 0) ? spd : d / dt;
+      if (v > MAX_SPEED) return;              // 位置が飛んだとみなして捨てる
+      if (v >= MOVING_SPEED) ride.moving += dt;
+      if (v > ride.maxSpeed) ride.maxSpeed = v;
+      $("vSpeed").innerHTML = kmh(v) + "<small>km/h</small>";
+    }
+  }
+  lastFix = { p, t };
+  const prev = ride.points[ride.points.length - 1];
+  if (prev && dist(prev, p) < MIN_STEP) return;
+  if (prev && !ride.gap) ride.distance += dist(prev, p); // 一時停止中に動いた分は距離に数えない
+  ride.gap = false;
+  if (alt != null) { // 獲得標高:ELEV_STEP以上の上りだけを数える
+    if (ride.elevBase == null) ride.elevBase = alt;
+    else if (alt - ride.elevBase >= ELEV_STEP) { ride.elevGain += alt - ride.elevBase; ride.elevBase = alt; }
+    else if (ride.elevBase - alt >= ELEV_STEP) ride.elevBase = alt;
+  }
+  ride.points.push([+lat.toFixed(6), +lon.toFixed(6), alt == null ? null : Math.round(alt), t]);
+  if (live.map) {
+    live.line.addLatLng(p); live.dot.setLatLng(p);
+    if (!live.map.hasLayer(live.dot)) live.dot.addTo(live.map);
+    live.map.panTo(p, { animate: false });
+  }
+  if (ride.points.length % 10 === 0) DB.set("current", ride); // 途中経過を保存(アプリが落ちても復旧できる)
+}
+
+function render() {
+  $("vDist").innerHTML = km(ride ? ride.distance : 0) + "<small>km</small>";
+  $("vTime").textContent = fmtTime(ride ? ride.moving : 0);
+  $("vElapsed").textContent = fmtTime(elapsed());
+  $("vAvg").innerHTML = (ride && ride.moving > 0 ? kmh(ride.distance / ride.moving) : "0.0") + "<small>km/h</small>";
+  $("vMax").innerHTML = kmh(ride ? ride.maxSpeed : 0) + "<small>km/h</small>";
+  $("vElev").innerHTML = Math.round(ride ? ride.elevGain : 0) + "<small>m</small>";
+  $("btnIdle").classList.toggle("hidden", state !== "idle");
+  $("btnRun").classList.toggle("hidden", state !== "run");
+  $("btnPaused").classList.toggle("hidden", state !== "paused");
+  $("bDemo").parentElement.classList.toggle("hidden", state !== "idle");
+}
+
+async function keepAwake(on) {
+  try {
+    if (on && "wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen");
+    else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch (e) { /* 画面の常時点灯に対応していない端末では何もしない */ }
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && state === "run") keepAwake(true); });
+
+function startGps() {
+  if (!("geolocation" in navigator)) { toast("この端末では位置情報が使えません"); return false; }
+  watchId = navigator.geolocation.watchPosition(
+    pos => { const c = pos.coords; onFix(c.latitude, c.longitude, c.altitude, c.accuracy, c.speed, pos.timestamp); },
+    err => { $("gpsState").textContent = "GPS:" + (err.code === 1 ? "許可されていません" : "取得できません"); if (err.code === 1) toast("設定で位置情報を許可してください"); },
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+  return true;
+}
+function stopGps() { if (watchId != null) navigator.geolocation.clearWatch(watchId); watchId = null; clearInterval(demoTimer); demoTimer = null; }
+
+// デモ走行:新潟市内を周回するルートを10倍速で流す
+function startDemo() {
+  const c = [37.9162, 139.0364]; let i = 0, alt = 5; const t0 = Date.now();
+  demoTimer = setInterval(() => {
+    i++; const a = i / 400 * 2 * Math.PI; // 1周約8.6km、3秒ごとに約21m進む(時速約26km)
+    alt += Math.sin(i / 15) * 0.8;
+    onFix(c[0] + 0.012 * Math.sin(a), c[1] + 0.016 * (1 - Math.cos(a)), alt, 8, 7 + Math.sin(i / 7) * 2, t0 + i * 3000);
+  }, 300);
+}
+
+async function begin(demo) {
+  ride = newRide(demo); lastFix = null; state = "run";
+  liveMapInit(); if (live.line) live.line.setLatLngs([]);
+  if (demo) { startDemo(); $("gpsState").textContent = "デモ走行中"; }
+  else if (!startGps()) { state = "idle"; ride = null; return; }
+  keepAwake(true); clearInterval(tick); tick = setInterval(render, 1000); render();
+}
+$("bStart").onclick = () => begin(false);
+$("bDemo").onclick = () => begin(true);
+$("bPause").onclick = () => {
+  ride.elapsedBefore = elapsed(); state = "paused"; lastFix = null; ride.gap = true;
+  stopGps(); keepAwake(false); DB.set("current", ride); render();
+};
+$("bResume").onclick = () => {
+  ride.runSince = Date.now(); state = "run";
+  if (ride.demo) startDemo(); else startGps();
+  keepAwake(true); render();
+};
+$("bFinish").onclick = async () => {
+  if (!confirm("走行を終了して保存しますか?")) return;
+  ride.end = Date.now(); ride.elapsed = ride.elapsedBefore;
+  if (!ride.name) ride.name = (ride.demo ? "デモ走行 " : "") + dateLabel(ride.start) + " のライド";
+  delete ride.runSince; delete ride.elevBase;
+  await DB.putRide(ride); await DB.del("current");
+  const saved = ride; ride = null; state = "idle"; clearInterval(tick); render();
+  $("gpsState").textContent = "GPS:待機中";
+  toast("保存しました"); await renderLog(); openDetail(saved.id);
+};
+
+// 前回、記録の途中でアプリが閉じた場合の復旧
+async function recover() {
+  const cur = await DB.get("current");
+  if (!cur) return;
+  ride = cur; state = "paused"; ride.elapsedBefore = ride.elapsedBefore || 0;
+  liveMapInit();
+  if (live.map && ride.points.length) { live.line.setLatLngs(ride.points.map(p => [p[0], p[1]])); live.map.fitBounds(live.line.getBounds(), { padding: [20, 20] }); }
+  render(); toast("前回の記録を復旧しました。再開か終了を選んでください");
+}
+
+// ===== 記録一覧 =====
+let rides = [], settings = { goal: 300 };
+async function renderLog() {
+  rides = (await DB.allRides()).sort((a, b) => b.start - a.start);
+  const y = new Date().getFullYear();
+  const real = rides.filter(r => !r.demo);
+  const yearM = real.filter(r => new Date(r.start).getFullYear() === y).reduce((s, r) => s + r.distance, 0);
+  $("yearTitle").textContent = y + "年の走行距離";
+  $("yearKm").textContent = (yearM / 1000).toFixed(1) + " km";
+  const pct = Math.min(100, yearM / 1000 / settings.goal * 100);
+  $("yearBar").style.width = pct + "%";
+  $("yearNote").textContent = "目標 " + settings.goal + " km まで あと " + Math.max(0, settings.goal - yearM / 1000).toFixed(1) + " km(" + pct.toFixed(0) + "%)";
+  const months = {};
+  real.forEach(r => { const d = new Date(r.start); const k = d.getFullYear() + "年" + (d.getMonth() + 1) + "月"; months[k] = (months[k] || 0) + r.distance; });
+  $("monthList").innerHTML = Object.keys(months).length
+    ? Object.entries(months).map(([k, v]) => k + ":" + (v / 1000).toFixed(1) + " km").join("<br>") : "まだ記録がありません";
+  $("rideList").innerHTML = rides.length ? rides.map(r => `
+    <div class="ride" data-id="${r.id}">
+      <div><div class="t"></div><div class="d">${fmtTime(r.moving)} ・ 平均 ${r.moving ? kmh(r.distance / r.moving) : "0.0"} km/h</div></div>
+      <div class="km">${km(r.distance)} km</div>
+    </div>`).join("") : '<div class="note">まだ記録がありません。「走る」からスタートしましょう。</div>';
+  document.querySelectorAll("#rideList .ride").forEach((el, i) => el.querySelector(".t").textContent = rides[i].name);
+}
+$("rideList").onclick = e => { const el = e.target.closest(".ride"); if (el) openDetail(el.dataset.id); };
+
+// ===== 記録の詳細 =====
+let detail = null, dMap = null, dLine = null;
+function openDetail(id) {
+  detail = rides.find(r => r.id === id); if (!detail) return;
+  show("s-detail");
+  $("dName").value = detail.name;
+  $("dDate").textContent = dateLabel(detail.start) + " 〜 " + dateLabel(detail.end);
+  const s = [["距離", km(detail.distance), "km"], ["走行時間", fmtTime(detail.moving), ""], ["平均速度", detail.moving ? kmh(detail.distance / detail.moving) : "0.0", "km/h"],
+             ["最高速度", kmh(detail.maxSpeed), "km/h"], ["獲得標高", Math.round(detail.elevGain), "m"], ["経過時間", fmtTime(detail.elapsed || 0), ""]];
+  $("dStats").innerHTML = s.map(x => `<div class="stat"><div class="k">${x[0]}</div><div class="v">${x[1]}<small>${x[2]}</small></div></div>`).join("");
+  if (!dMap) { dMap = makeMap("detailMap"); if (dMap) dLine = L.polyline([], { color: "#fc5200", weight: 5 }).addTo(dMap); }
+  if (dMap) {
+    setTimeout(() => {
+      dMap.invalidateSize();
+      dLine.setLatLngs(detail.points.map(p => [p[0], p[1]]));
+      if (detail.points.length > 1) dMap.fitBounds(dLine.getBounds(), { padding: [20, 20] });
+    }, 50);
+  }
+}
+$("dName").onchange = async () => { detail.name = $("dName").value.trim() || detail.name; await DB.putRide(detail); renderLog(); };
+$("bBack").onclick = () => show("s-log");
+$("bDel").onclick = async () => {
+  if (!confirm("この記録を削除します。元に戻せません。よろしいですか?")) return;
+  await DB.delRide(detail.id); detail = null; await renderLog(); show("s-log"); toast("削除しました");
+};
+
+// ===== ファイル保存 =====
+function download(name, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+$("bGpx").onclick = () => {
+  const pts = detail.points.map(p => `<trkpt lat="${p[0]}" lon="${p[1]}">${p[2] == null ? "" : "<ele>" + p[2] + "</ele>"}<time>${new Date(p[3]).toISOString()}</time></trkpt>`).join("\n");
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="FACT Ride" xmlns="http://www.topografix.com/GPX/1/1">
+<trk><name>${esc(detail.name)}</name><type>cycling</type><trkseg>
+${pts}
+</trkseg></trk></gpx>`;
+  download("ride_" + detail.id + ".gpx", gpx, "application/gpx+xml");
+};
+$("bBackup").onclick = async () => {
+  const data = { app: "FACT Ride", version: 1, savedAt: new Date().toISOString(), settings, rides: await DB.allRides() };
+  download("fact-ride-backup_" + new Date().toISOString().slice(0, 10) + ".json", JSON.stringify(data), "application/json");
+};
+$("bRestoreBtn").onclick = () => $("restoreFile").click();
+$("restoreFile").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const data = JSON.parse(await f.text());
+    if (data.app !== "FACT Ride" || !Array.isArray(data.rides)) throw new Error();
+    if (!confirm(data.rides.length + "件の記録を復元します。同じ記録は上書きされます。よろしいですか?")) return;
+    for (const r of data.rides) await DB.putRide(r);
+    if (data.settings) { settings = data.settings; await DB.set("settings", settings); $("goal").value = settings.goal; }
+    await renderLog(); toast(data.rides.length + "件を復元しました");
+  } catch (err) { toast("FACT Ride のバックアップファイルではないようです"); }
+  e.target.value = "";
+};
+$("goal").onchange = async () => { const v = Math.max(1, Math.round(+$("goal").value || 300)); settings.goal = v; $("goal").value = v; await DB.set("settings", settings); renderLog(); };
+
+// ===== 画面の切り替え =====
+function show(id) {
+  document.querySelectorAll("section").forEach(s => s.classList.toggle("on", s.id === id));
+  const tab = id === "s-detail" ? "s-log" : id;
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.s === tab));
+  if (id === "s-ride" && live.map) setTimeout(() => live.map.invalidateSize(), 50);
+  window.scrollTo(0, 0);
+}
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => { show(b.dataset.s); if (b.dataset.s === "s-log") renderLog(); });
+
+// ===== 起動 =====
+(async () => {
+  try { await DB.open(); } catch (e) { toast("データを保存できません(プライベートブラウズでは使えません)"); return; }
+  settings = (await DB.get("settings")) || settings; $("goal").value = settings.goal;
+  liveMapInit();
+  await recover(); render(); renderLog();
+})();
+</script>
+</body>
+</html>
